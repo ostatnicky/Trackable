@@ -46,7 +46,7 @@ public extension TrackableClass {
         - parameter event: Event identifier
         - parameter trackedProperties: Properties added to the event
      */
-    public func track(_ event: Event, trackedProperties: Set<TrackedProperty>? = nil) {
+    func track(_ event: Event, trackedProperties: Set<TrackedProperty>? = nil) {
         let trackClosure: () -> Void = {
             if let ownLink = ChainLink.responsibilityChainTable[self.uniqueIdentifier] {
                 ownLink.track(event, trackedProperties: trackedProperties ?? [])
@@ -79,7 +79,7 @@ public extension TrackableClass {
         - parameter trackedProperties: Properties which will be added to all events tracked on self
         - parameter parent: Trackable parent for *self*. Events are not tracked directly but they are resend to parent.
      */
-    public func setupTrackableChain(trackedProperties: Set<TrackedProperty> = [], parent: TrackableClass? = nil) {
+    func setupTrackableChain(trackedProperties: Set<TrackedProperty> = [], parent: TrackableClass? = nil) {
 
         let setupClosure: () -> Void = {
             var parentLink: ChainLink? = nil

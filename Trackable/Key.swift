@@ -24,7 +24,7 @@ public extension Key where Self : RawRepresentable {
     /**
         String representation of Event object.
      */
-    public var description: String {
+    var description: String {
         var rawDescription = String(reflecting: type(of: self)) + "." + "\(self.rawValue)"
         if let
             prefixToRemove = keyPrefixToRemove,
@@ -50,10 +50,10 @@ public extension Key {
         
         var finalKey = myKey
         
-        for i in 1...otherKey.characters.count {
-            let prefix = String(otherKey.characters.prefix(i))
+        for i in 1...otherKey.count {
+            let prefix = String(otherKey.prefix(i))
             if myKey.hasPrefix(prefix) == false {
-                finalKey = finalKey + "." + String(otherKey.characters.suffix(otherKey.characters.count - i + 1))
+                finalKey = finalKey + "." + String(otherKey.suffix(otherKey.count - i + 1))
                 break
             }
         }
