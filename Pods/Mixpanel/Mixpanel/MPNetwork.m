@@ -6,62 +6,111 @@
 //  Copyright © 2016 Mixpanel. All rights reserved.
 //
 
+#import "Mixpanel.h"
+#import "MixpanelPrivate.h"
+#import "MPLogger.h"
 #import "MPNetwork.h"
 #import "MPNetworkPrivate.h"
-#import "MPLogger.h"
-#import "Mixpanel.h"
+#if !TARGET_OS_OSX
 #import <UIKit/UIKit.h>
+#endif
 
-#define MIXPANEL_NO_NETWORK_ACTIVITY_INDICATOR (defined(MIXPANEL_APP_EXTENSION) || defined(MIXPANEL_TVOS_EXTENSION) || defined(MIXPANEL_WATCH_EXTENSION))
+#if (defined(MIXPANEL_TVOS) || defined(MIXPANEL_WATCHOS) || defined(MIXPANEL_MACOS))
+#define MIXPANEL_NO_NETWORK_ACTIVITY_INDICATOR 1
+#endif
 
 static const NSUInteger kBatchSize = 50;
 
 @implementation MPNetwork
 
-+ (NSURLSession *)sharedURLSession {
++ (NSURLSession *)sharedURLSession
+{
     static NSURLSession *sharedSession = nil;
     @synchronized(self) {
         if (sharedSession == nil) {
             NSURLSessionConfiguration *sessionConfig = [NSURLSessionConfiguration defaultSessionConfiguration];
-            sessionConfig.timeoutIntervalForRequest = 7.0;
+            sessionConfig.timeoutIntervalForRequest = 30.0;
             sharedSession = [NSURLSession sessionWithConfiguration:sessionConfig];
         }
     }
     return sharedSession;
 }
 
-- (instancetype)initWithServerURL:(NSURL *)serverURL {
+- (instancetype)initWithServerURL:(NSURL *)serverURL mixpanel:(Mixpanel *)mixpanel
+{
     self = [super init];
     if (self) {
         self.serverURL = serverURL;
         self.shouldManageNetworkActivityIndicator = YES;
         self.useIPAddressForGeoLocation = YES;
+        self.mixpanel = mixpanel;
     }
     return self;
 }
 
 #pragma mark - Flush
-- (void)flushEventQueue:(NSMutableArray *)events {
+- (void)flushEventQueue:(NSMutableArray *)events
+{
+    NSMutableArray *automaticEventsQueue;
+    @synchronized (self.mixpanel) {
+        automaticEventsQueue = [self orderAutomaticEvents:events];
+    }
     [self flushQueue:events endpoint:MPNetworkEndpointTrack];
+    @synchronized (self.mixpanel) {
+        if (automaticEventsQueue) {
+            [events addObjectsFromArray:automaticEventsQueue];
+        }
+    }
 }
 
-- (void)flushPeopleQueue:(NSMutableArray *)people {
+- (NSMutableArray *)orderAutomaticEvents:(NSMutableArray *)events
+{
+    if (self.mixpanel.automaticEventsEnabled == nil || !self.mixpanel.automaticEventsEnabled.boolValue) {
+        NSMutableArray *discardedItems = [NSMutableArray array];
+        for (NSDictionary *e in events) {
+            if ([e[@"event"] hasPrefix:@"$ae_"]) {
+                [discardedItems addObject:e];
+            }
+        }
+        [events removeObjectsInArray:discardedItems];
+        if (self.mixpanel.automaticEventsEnabled == nil) {
+            return discardedItems;
+        }
+    }
+    return nil;
+}
+
+- (void)flushPeopleQueue:(NSMutableArray *)people
+{
     [self flushQueue:people endpoint:MPNetworkEndpointEngage];
 }
 
-- (void)flushQueue:(NSMutableArray *)queue endpoint:(MPNetworkEndpoint)endpoint {
+- (void)flushGroupsQueue:(NSMutableArray *)groups
+{
+    [self flushQueue:groups endpoint:MPNetworkEndpointGroups];
+}
+
+- (void)flushQueue:(NSMutableArray *)queue endpoint:(MPNetworkEndpoint)endpoint
+{
     if ([[NSDate date] timeIntervalSince1970] < self.requestsDisabledUntilTime) {
         MPLogDebug(@"Attempted to flush to %lu, when we still have a timeout. Ignoring flush.", endpoint);
         return;
     }
+
+    NSMutableArray *queueCopyForFlushing;
+
+    Mixpanel *mixpanel = self.mixpanel;
+    @synchronized (mixpanel) {
+        queueCopyForFlushing = [queue mutableCopy];
+    }
     
-    while (queue.count > 0) {
-        NSUInteger batchSize = MIN(queue.count, kBatchSize);
-        NSArray *batch = [queue subarrayWithRange:NSMakeRange(0, batchSize)];
+    while (queueCopyForFlushing.count > 0) {
+        NSUInteger batchSize = MIN(queueCopyForFlushing.count, kBatchSize);
+        NSArray *batch = [queueCopyForFlushing subarrayWithRange:NSMakeRange(0, batchSize)];
         
         NSString *requestData = [MPNetwork encodeArrayForAPI:batch];
         NSString *postBody = [NSString stringWithFormat:@"ip=%d&data=%@", self.useIPAddressForGeoLocation, requestData];
-        MPLogDebug(@"%@ flushing %lu of %lu to %lu: %@", self, (unsigned long)batch.count, (unsigned long)queue.count, endpoint, queue);
+        MPLogDebug(@"%@ flushing %lu of %lu to %lu: %@", self, (unsigned long)batch.count, (unsigned long)queue.count, endpoint, queueCopyForFlushing);
         NSURLRequest *request = [self buildPostRequestForEndpoint:endpoint andBody:postBody];
         
         [self updateNetworkActivityIndicator:YES];
@@ -72,7 +121,6 @@ static const NSUInteger kBatchSize = 50;
                                                                   NSURLResponse *urlResponse,
                                                                   NSError *error) {
             [self updateNetworkActivityIndicator:NO];
-            
             BOOL success = [self handleNetworkResponse:(NSHTTPURLResponse *)urlResponse withError:error];
             if (error || !success) {
                 MPLogError(@"%@ network failure: %@", self, error);
@@ -93,12 +141,24 @@ static const NSUInteger kBatchSize = 50;
         if (didFail) {
             break;
         }
-        
-        [queue removeObjectsInArray:batch];
+
+        @synchronized (mixpanel) {
+            for (NSDictionary *event in batch) {
+                NSUInteger index = [queueCopyForFlushing indexOfObjectIdenticalTo:event];
+                if (index != NSNotFound) {
+                    [queueCopyForFlushing removeObjectAtIndex:index];
+                }
+                index = [queue indexOfObjectIdenticalTo:event];
+                if (index != NSNotFound) {
+                    [queue removeObjectAtIndex:index];
+                }
+            }
+        }
     }
 }
 
-- (BOOL)handleNetworkResponse:(NSHTTPURLResponse *)response withError:(NSError *)error {
+- (BOOL)handleNetworkResponse:(NSHTTPURLResponse *)response withError:(NSError *)error
+{
     MPLogDebug(@"HTTP Response: %@", response.allHeaderFields);
     MPLogDebug(@"HTTP Error: %@", error.localizedDescription);
     
@@ -130,7 +190,8 @@ static const NSUInteger kBatchSize = 50;
 #pragma mark - Helpers
 + (NSArray<NSURLQueryItem *> *)buildDecideQueryForProperties:(NSDictionary *)properties
                                               withDistinctID:(NSString *)distinctID
-                                                    andToken:(NSString *)token {
+                                                    andToken:(NSString *)token
+{
     NSURLQueryItem *itemVersion = [NSURLQueryItem queryItemWithName:@"version" value:@"1"];
     NSURLQueryItem *itemLib = [NSURLQueryItem queryItemWithName:@"lib" value:@"iphone"];
     NSURLQueryItem *itemToken = [NSURLQueryItem queryItemWithName:@"token" value:token];
@@ -147,20 +208,24 @@ static const NSUInteger kBatchSize = 50;
     return @[ itemVersion, itemLib, itemToken, itemDistinctID, itemProperties ];
 }
 
-+ (NSString *)pathForEndpoint:(MPNetworkEndpoint)endpoint {
++ (NSString *)pathForEndpoint:(MPNetworkEndpoint)endpoint
+{
     static NSDictionary *endPointToPath = nil;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
         endPointToPath = @{ @(MPNetworkEndpointTrack): @"/track/",
                             @(MPNetworkEndpointEngage): @"/engage/",
-                            @(MPNetworkEndpointDecide): @"/decide" };
+                            @(MPNetworkEndpointDecide): @"/decide",
+                            @(MPNetworkEndpointGroups): @"/groups/"
+                            };
     });
     NSNumber *key = @(endpoint);
     return endPointToPath[key];
 }
 
 - (NSURLRequest *)buildGetRequestForEndpoint:(MPNetworkEndpoint)endpoint
-                              withQueryItems:(NSArray <NSURLQueryItem *> *)queryItems {
+                              withQueryItems:(NSArray <NSURLQueryItem *> *)queryItems
+{
     return [self buildRequestForEndpoint:[MPNetwork pathForEndpoint:endpoint]
                             byHTTPMethod:@"GET"
                           withQueryItems:queryItems
@@ -168,7 +233,8 @@ static const NSUInteger kBatchSize = 50;
 }
 
 - (NSURLRequest *)buildPostRequestForEndpoint:(MPNetworkEndpoint)endpoint
-                                      andBody:(NSString *)body {
+                                      andBody:(NSString *)body
+{
     return [self buildRequestForEndpoint:[MPNetwork pathForEndpoint:endpoint]
                             byHTTPMethod:@"POST"
                           withQueryItems:nil
@@ -183,7 +249,9 @@ static const NSUInteger kBatchSize = 50;
     NSURL *urlWithEndpoint = [self.serverURL URLByAppendingPathComponent:endpoint];
     NSURLComponents *components = [NSURLComponents componentsWithURL:urlWithEndpoint
                                              resolvingAgainstBaseURL:YES];
-    components.queryItems = queryItems;
+    if (queryItems) {
+        components.queryItems = queryItems;
+    }
 
     // NSURLComponents/NSURLQueryItem doesn't encode + as %2B, and then the + is interpreted as a space on servers
     components.percentEncodedQuery = [components.percentEncodedQuery stringByReplacingOccurrencesOfString:@"+" withString:@"%2B"];
@@ -295,8 +363,12 @@ static const NSUInteger kBatchSize = 50;
 
 - (void)updateNetworkActivityIndicator:(BOOL)enabled {
 #if !MIXPANEL_NO_NETWORK_ACTIVITY_INDICATOR
-    if (self.shouldManageNetworkActivityIndicator) {
-        [UIApplication sharedApplication].networkActivityIndicatorVisible = enabled;
+    if (![Mixpanel isAppExtension]) {
+        if (self.shouldManageNetworkActivityIndicator) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [Mixpanel sharedUIApplication].networkActivityIndicatorVisible = enabled;
+            });
+        }
     }
 #endif
 }

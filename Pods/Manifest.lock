@@ -1,20 +1,24 @@
 PODS:
-  - Mixpanel (3.0.8):
-    - Mixpanel/Mixpanel (= 3.0.8)
-  - Mixpanel/Mixpanel (3.0.8)
-  - Nimble (5.1.1)
-  - Quick (1.0.0)
+  - Mixpanel (3.4.9)
+  - Nimble (8.0.4)
+  - Quick (2.2.0)
 
 DEPENDENCIES:
   - Mixpanel
   - Nimble
   - Quick
 
+SPEC REPOS:
+  https://github.com/cocoapods/specs.git:
+    - Mixpanel
+    - Nimble
+    - Quick
+
 SPEC CHECKSUMS:
-  Mixpanel: 550a23d5dd95f8e9cda21e697661ffddbc8da46b
-  Nimble: 415e3aa3267e7bc2c96b05fa814ddea7bb686a29
-  Quick: 8024e4a47e6cc03a9d5245ef0948264fc6d27cff
+  Mixpanel: 5aca6e506b34650b96dc759a208513d86650fac7
+  Nimble: 18d5360282923225d62b09d781f63abc1a0111fc
+  Quick: 7fb19e13be07b5dfb3b90d4f9824c855a11af40e
 
-PODFILE CHECKSUM: 031fe2fe8b28f8440262c2a0de4ecf774036cd62
+PODFILE CHECKSUM: 45e79cab419155a5d094e1525ca037faab0f5cf7
 
-COCOAPODS: 1.2.0.beta.3
+COCOAPODS: 1.7.5
