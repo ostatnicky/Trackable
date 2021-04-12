@@ -14,4 +14,5 @@ Pod::Spec.new do |s|
   s.source_files   = 'Trackable/*.swift'
   s.frameworks = 'Foundation'
   s.requires_arc = true
+  s.swift_version = '5.0'
 end
